@@ -1,0 +1,15 @@
+yfinance
+pandas
+numpy
+matplotlib
+scipy
+scikit-learn
+requests
+python-dotenv
+vaderSentiment
+tqdm
+tabulate
+jinja2
+pyarrow
+plotly
+kaleido
