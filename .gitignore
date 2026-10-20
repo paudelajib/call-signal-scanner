@@ -18,3 +18,6 @@ cache/
 results/
 .env
 .venv/
+# v2 runtime data (downloaded market data, scores, news) - never committed
+data/
+.pytest_cache/

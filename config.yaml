@@ -1,0 +1,63 @@
+# Call Signal Scanner v2 configuration
+# Everything here can be edited by hand; weights can also be edited in the web UI
+# (the UI writes back to this file).
+
+data_dir: data
+
+universe:
+  # S&P 500 constituents with GICS sectors (public, no key needed)
+  source_url: https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv
+  refresh_days: 7          # re-download the constituent list this often
+  benchmark: SPY
+
+history:
+  start: "2014-01-01"      # first daily bar to download on the very first run
+  overlap_days: 10         # re-download this many recent days on each refresh to detect
+                           # dividend/split re-adjustments
+
+fundamentals:
+  refresh_days: 7          # re-pull P/E history + company info for a ticker this often
+  workers: 4               # parallel requests to Yahoo
+  report_lag_days: 45      # quarter-end P/E is only "known" this many days after quarter end
+                           # (earnings come out weeks later) - prevents look-ahead in backtests
+
+macro:
+  # FRED series (free CSV endpoint, no key needed)
+  fred_series:
+    DGS10: "10Y Treasury yield"
+    DGS2: "2Y Treasury yield"
+    T10YIE: "10Y breakeven inflation"
+    DFF: "Fed funds rate"
+    CPIAUCSL: "CPI (monthly, display only)"
+  yahoo_series:
+    "^VIX": VIX
+  sensitivity_window_weeks: 104   # rolling window for rate / inflation betas
+  trend_window_days: 63           # how far back we measure the current rate / inflation trend
+
+news:
+  provider: newsapi        # newsapi | none  (needs NEWSAPI_KEY in .env)
+  daily_request_budget: 90 # NewsAPI free plan is small; we spend it on the names that matter most
+  yahoo_news: true         # also pull Yahoo Finance headlines (free, no key) for every ticker
+  lookback_days: 7
+  half_life_days: 1.0      # recency weighting: a headline loses half its weight each day
+                           # (6h old ~ 0.84, 1 day ~ 0.5, 3 days ~ 0.13, 7 days ~ 0.01)
+  refetch_hours: 3         # a later Refresh the same day re-pulls headlines older than this
+  model: vader             # vader | finbert  (finbert needs: pip install transformers torch)
+  min_headlines: 2
+
+horizons:
+  short:  {days: 5,   label: "1 Week"}
+  medium: {days: 21,  label: "1 Month"}
+  long:   {days: 126, label: "6 Months"}
+
+score:
+  winsor_pct: 0.02         # clip extreme feature values at these cross-sectional percentiles
+  tanh_scale: 0.9          # score = tanh(scale * composite_z)  ->  range -1 .. +1
+
+# Feature weights live in weights.yaml (also editable from the web UI).
+
+backtest:
+  rebalance_every: 5       # trading days between backtest score dates
+  start: "2016-01-01"      # first scoring date (needs ~1y of warm-up history before it)
+  oos_years: 2             # last N years are held out to compare default vs IC-learned weights
+  quantiles: 5

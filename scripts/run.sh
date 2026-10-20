@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-python -m src.pipeline --tickers data/tickers_50.txt --outdir results "$@"
+# Start the web app:  ./scripts/run.sh   then open http://127.0.0.1:8050
+cd "$(dirname "$0")/.." && python app.py "$@"

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Scanner</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/vendor/plotly.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div class="brand">Signal Scanner <span>S&amp;P 500</span></div>
+    <div class="macro" id="macro" aria-label="Market backdrop"></div>
+    <div class="refresh">
+      <div class="asof" id="asof"></div>
+      <button class="btn primary" id="refreshBtn">Refresh data</button>
+    </div>
+  </div>
+  <div class="progress" aria-hidden="true"><i id="progBar"></i></div>
+  <div class="progress-text" id="progText" role="status"></div>
+  <nav class="nav" role="tablist">
+    <button class="tab" role="tab" data-view="ranking" aria-selected="true">Ranking</button>
+    <button class="tab" role="tab" data-view="backtest" aria-selected="false">Backtest</button>
+    <button class="tab" role="tab" data-view="weights" aria-selected="false">Weights</button>
+    <div class="search">
+      <input id="search" type="search" placeholder="Look up a stock: ticker or company" autocomplete="off" aria-label="Look up a stock">
+      <div class="suggest" id="suggest" role="listbox"></div>
+    </div>
+  </nav>
+</header>
+
+<main>
+  <section class="view" id="view-ranking">
+    <div class="controls">
+      <span>Rank by</span>
+      <div class="seg" id="horizonSeg" role="group" aria-label="Horizon"></div>
+      <select id="sectorSel" aria-label="Sector"><option value="">All sectors</option></select>
+      <input type="text" id="filterTxt" placeholder="Filter list" aria-label="Filter list">
+      <span class="count" id="count"></span>
+    </div>
+    <div id="rankingBody"></div>
+  </section>
+
+  <section class="view" id="view-backtest" hidden>
+    <div class="bt-head">
+      <button class="btn primary" id="btRun">Run backtest</button>
+      <p id="btInfo">Scores every week of real history with today's weights and measures what happened next.</p>
+    </div>
+    <div id="btBody"></div>
+  </section>
+
+  <section class="view" id="view-weights" hidden>
+    <p class="note" style="margin-top:0">Positive weight: a higher value of the feature is bullish. Negative: bearish. Only the relative size matters. Saving re-scores all 500 stocks instantly from stored data.</p>
+    <div class="wt-actions">
+      <button class="btn primary" id="wSave">Save and re-score</button>
+      <button class="btn" id="wLearned">Use backtest-learned weights</button>
+      <button class="btn" id="wRevert">Discard changes</button>
+    </div>
+    <div class="tablewrap" style="max-height:none"><table class="wt" id="wTable"></table></div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="panel" id="panel" aria-label="Stock details" aria-hidden="true"></aside>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

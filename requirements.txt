@@ -1,15 +1,16 @@
-yfinance
-pandas
-numpy
-matplotlib
-scipy
-scikit-learn
-requests
-python-dotenv
-vaderSentiment
-tqdm
-tabulate
-jinja2
-pyarrow
-plotly
-kaleido
+yfinance>=1.7
+pandas>=2.2
+numpy>=1.26
+pyarrow>=15
+requests>=2.31
+python-dotenv>=1.0
+pyyaml>=6.0
+vaderSentiment>=3.3
+flask>=3.0
+plotly>=5.20        # only used to serve plotly.js locally to the web UI
+scikit-learn>=1.4   # ML comparison (next phase) and legacy modules
+pytest>=8
+
+# Optional: finance-tuned headline sentiment (set news.model: finbert in config.yaml)
+# transformers>=4.40
+# torch>=2.2

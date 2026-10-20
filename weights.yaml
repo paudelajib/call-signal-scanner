@@ -1,0 +1,34 @@
+# Signed weights per horizon. Positive = higher value is bullish, negative = bearish.
+# Each feature is z-scored across the S&P 500 on the same day before weighting, so weights are
+# comparable. Only relative size matters (they are normalised by the sum of |w|).
+# Defaults come from well-documented equity effects; the backtest's "feature IC" table
+# tells you which ones actually worked on your data so you can tune these.
+weights:
+  short:
+    ret_1w: -0.25          # short-term reversal: last week's losers tend to bounce
+    rsi14: -0.10           # overbought (high RSI) tends to cool off over days
+    vol_surge: 0.10        # unusual volume = attention / information arriving
+    macd_hist: 0.10
+    rel_sector_3m: 0.10
+    news_sentiment: 0.25
+    rate_tilt: 0.05
+    infl_tilt: 0.05
+  medium:
+    mom_3m: 0.15
+    mom_12_1: 0.15         # classic 12-month momentum skipping the last month
+    trend_50: 0.10
+    trend_50_200: 0.10
+    near_52w_high: 0.15
+    rel_sector_3m: 0.10
+    news_sentiment: 0.10
+    pe_vs_sector: 0.05
+    rate_tilt: 0.05
+    infl_tilt: 0.05
+  long:
+    mom_12_1: 0.25
+    pe_vs_sector: 0.25     # cheap vs its own sector (earnings yield, sector-relative)
+    volatility_3m: -0.15   # low-volatility effect
+    trend_50_200: 0.10
+    near_52w_high: 0.10
+    rate_tilt: 0.10
+    infl_tilt: 0.05

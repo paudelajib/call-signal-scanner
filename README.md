@@ -1,189 +1,95 @@
-# 📈 Call Signal Scanner
+# Signal Scanner v2: S&P 500 buy scores on daily data
 
-A repeatable, end-to-end scanner for **S&P 500 tickers** using rule-based technical signals, optional news sentiment, and interactive visualization.  
+A local web app that ranks all S&P 500 stocks by three **buy scores from −1 to +1**:
 
-The system is designed for **daily use**:  
-- Pulls OHLCV data (cached locally so you don’t burn API calls)  
-- Computes signals and a **BuyScore (0–100)**  
-- Optionally integrates **news sentiment** (cached daily as well)  
-- Produces **CSVs + charts + an interactive Top-10 dashboard + a PDF report**  
-- Includes a **backtest** module to check “what if we had traded this a month ago?”  
+| Score | Horizon | Leans on |
+|---|---|---|
+| **1 Week** | next 5 trading days | short-term reversal, RSI, volume surges, MACD, headline sentiment |
+| **1 Month** | next 21 trading days | 3- and 12-month momentum, trend, 52-week-high proximity, sector-relative strength, news |
+| **6 Months** | next 126 trading days | 12-1 momentum, **sector-relative P/E**, low volatility, rate & inflation sensitivity |
 
----
+Everything runs on **real daily market data**: prices from Yahoo Finance, yields and breakeven inflation from FRED, P/E history from Yahoo's quarterly valuation tables, and headlines from Google News, Yahoo and (optionally) NewsAPI. Nothing is simulated. The synthetic data in `tests/` exists only to check that the code runs.
 
-## 🚀 Features
+## Quick start
 
-- **Signals (S1–S5)**
-  - **S1**: Breakout on volume  
-  - **S2**: RSI trend confirmation  
-  - **S3**: MACD momentum  
-  - **S4**: Squeeze breakout (Bollinger/Keltner)  
-  - **S5**: Higher-High / Higher-Low structure  
-- **BuyScore**: weighted sum (0–100)  
-- **Sentiment (optional)**:
-  - Raw VADER compound score (`Sentiment`)  
-  - Cross-sectional z-score (`SentimentZ`) for ranking tickers  
-- **Caching**:
-  - Prices → `cache/ohlcv_daily/YYYY-MM-DD/<TICKER>.parquet`  
-  - News → `cache/news_daily/YYYY-MM-DD/<TICKER>.json`  
-- **Outputs**:
-  - `buy_signals.csv` and `top_N.csv`  
-  - Histograms (BuyScore, sentiment)  
-  - Interactive **Top-10 dashboard** (`top10_dashboard.html`)  
-  - PDF (`top10.pdf`)  
-- **Backtest (new)**:  
-  - Simulate “as of 30 days ago” signals vs actual returns today  
-  - Produce scatterplots + grouped histograms
-
----
-
-## ⚙️ Setup
-
-### 1. Clone and install dependencies
 ```bash
-git clone https://github.com/yourusername/call-signal-scanner.git
-cd call-signal-scanner
+conda create -n scanner python=3.12 -y && conda activate scanner
 pip install -r requirements.txt
+python app.py                # then open http://127.0.0.1:8050
 ```
 
-### 2. (Optional) Configure News API
-Create a `.env` file in the project root:
-```
-NEWS_PROVIDER=newsapi
-NEWSAPI_KEY=YOUR_NEWSAPI_KEY
-```
-If you skip this, the scanner will run with **empty sentiment columns**.
+Press **Refresh data**. The first run downloads about 12 years of history for ~500 stocks and takes roughly 10–20 minutes. After that, each refresh only appends the new days, re-pulls headlines and re-ranks, which takes a few minutes.
 
-### 3. Provide tickers
-The scanner expects a text file with one ticker per line:
-```
-data/tickers_sp500.txt
-```
-Example:
-```
-NVDA
-MSFT
-AAPL
-AMZN
-META
-```
+Optional: put a NewsAPI key in `.env` as `NEWSAPI_KEY=...`. Google News and Yahoo headlines work without any key.
 
----
+## What the app shows
 
-## 📊 Running the Scanner
+- **Ranking**: all 500 stocks sorted by the chosen horizon. The bar glyph shows all three scores at once (right = bullish, left = bearish). Filter by sector or text and click any column to sort.
+- **Stock detail** (click a row or search by ticker or company name):
+  - the three scores, and which features pushed each one up or down
+  - a 2-year price chart with the 50- and 200-day averages, plus score history
+  - P/E and forward P/E against the **median of its own GICS sector**, with a list of peers
+  - rate and inflation sensitivity: how the stock has moved per +0.25pp in the 10-year yield and in breakeven inflation, after removing the market's move
+  - fundamentals, analyst targets, and the latest headlines with per-headline sentiment, newest first
+- **Backtest**: walk-forward test over real history (see below).
+- **Weights**: edit every feature's weight for every horizon. Saving re-scores instantly with no downloads. The backtest's IC for each feature is shown beside each input.
 
-### Normal run (reuses cached data if available)
-```bash
-python -m src.pipeline --tickers data/tickers_sp500.txt --outdir results
-```
+The header shows the market backdrop: SPY, 10Y and 2Y yields, breakeven inflation, Fed funds, CPI year-on-year and VIX.
 
-### Force a fresh snapshot (ignore cache)
-```bash
-python -m src.pipeline --tickers data/tickers_sp500.txt --outdir results --force_new_snapshot
-```
+## How scores are built
 
-### Change number of top tickers in dashboard/PDF
-```bash
-python -m src.pipeline --tickers data/tickers_sp500.txt --outdir results --top_n 20
-```
+1. **Features**: 17 per stock per day, e.g. `mom_12_1`, `trend_50_200`, `rsi14`, `pe_vs_sector`, `rate_tilt`, `news_sentiment`. The full list with descriptions is in `src/features.py`.
+2. **Cross-sectional z-scores**: each day, each feature is winsorised and z-scored across the S&P 500. Valuation is z-scored *within its GICS sector*, using earnings yield (EPS/price) so loss-makers are handled properly. Banks are compared to banks and software to software.
+3. **Weighted composite per horizon**: weights are in `weights.yaml` and signed (negative = bearish). Only their relative size matters.
+4. **Scaling**: the composite is re-standardised and passed through `tanh`, giving −1…+1. **Scores are relative**: 0 means average among S&P 500 stocks today. They are not a forecast of the market's direction.
 
-### Train signal weights from past performance
-```bash
-python -m src.pipeline --tickers data/tickers_sp500.txt --outdir results --learn
-```
+**Rates and inflation**: for each stock, a rolling 2-year weekly regression of its market-adjusted return on changes in the 10Y yield (DGS10) and 10Y breakeven inflation (T10YIE) gives a sensitivity. The `rate_tilt` / `infl_tilt` features multiply that sensitivity by the last 3 months' trend in yields or inflation. Monthly CPI is shown for context but kept out of the scores, because it is published with a lag.
 
----
+**News**: each headline's sentiment comes from VADER, or optionally FinBERT. Headlines are weighted by recency with a 1-day half-life (6h old ≈ 0.84, 1 day = 0.5, 3 days ≈ 0.13), so the latest news dominates. Every day's raw headlines and aggregate sentiment are stored, so the app builds its own point-in-time news history.
 
-## 📂 Outputs
+## Backtest
 
-- **Signals**
-  - `results/buy_signals.csv` → all tickers with signals + BuyScore (+ sentiment if enabled)  
-  - `results/top_10.csv` → top N tickers sorted by BuyScore  
-- **Charts**
-  - `results/buyscore_hist.png` → distribution of BuyScores  
-  - `results/sentiment_hist.png` → distribution of sentiment scores (if enabled)  
-- **Interactive dashboard**
-  - `results/top10_dashboard.html` → open in any browser for zoomable charts  
-- **PDF**
-  - `results/top10.pdf` → static summary of top N tickers  
-- **Cache**
-  - `cache/ohlcv_daily/YYYY-MM-DD/` → daily OHLCV snapshots  
-  - `cache/news_daily/YYYY-MM-DD/` → cached news JSON (if enabled)
+`Backtest → Run backtest` (or `python -m src.cli backtest`) scores the market every 5 trading days since 2016, using **only data available at each date**. It runs exactly the code the live app uses. Each position enters at the next day's open and is measured over 5, 21 and 126 days. Per horizon it reports:
 
----
+- **IC**: the rank correlation between score and forward return, each week. About 0.02–0.05 is useful and above 0.05 is strong. The t-stat is computed on non-overlapping periods only.
+- **Quintile returns**, top-minus-bottom spread, top-quintile hit rate and cumulative excess return.
+- **Feature-level IC**, showing which inputs actually predicted returns.
+- **Out-of-sample check**: weights learned from feature ICs on earlier years (with an embargo) are compared against your weights on the last 2 years. Apply them from the Weights tab if they win.
 
-## 🔎 Backtest (One-Month Snapshot)
+`tests/test_pipeline.py::test_no_lookahead` verifies that features on any date are identical whether or not later data exists.
 
-**Goal:** Check “If we had only data up to 30 days ago, what BuyScores would we have assigned, and what actually happened since then?”
+**Known limits.** The universe is today's S&P 500 members (survivorship bias). P/E history only reaches back as far as Yahoo provides. News sentiment has no history before you start running the app. Results ignore trading costs.
 
-### Run backtest
-```bash
-python -m src.backtest_one_month --tickers data/tickers_sp500.txt --outdir results
-
-## modified backtest code
+## Command line
 
 ```bash
-python -u -m src.backtest_one_month \
-  --tickers data/tickers_sp500.txt \
-  --outdir results \
-  --snapshot_date 2025-09-01 \
-  --lookback_days 60
+python -m src.cli refresh      # same as the Refresh button
+python -m src.cli backtest
+python -m src.cli rescore      # after editing weights.yaml by hand
+python -m pytest -q            # code-path tests (synthetic data, never touches data/)
 ```
 
-Options:
-- `--lookback_days 30` → how far back the “as of” date should be  
-- `--snapshot_date YYYY-MM-DD` → use a specific cached snapshot
+## Layout
 
-### Outputs
-- `results/backtest_1m_<SNAPDAY>.csv` → per-ticker BuyScore (as of) + actual forward % return  
-- `results/backtest_1m_scatter_<SNAPDAY>.png` → scatter: BuyScore vs forward % return  
-- `results/backtest_1m_bins_<SNAPDAY>.png` → average forward % return by BuyScore bin  
-
----
-
-## 🛠️ Troubleshooting
-
-- Run once with `--force_new_snapshot` to populate caches.  
-- Ignore `viz.py` errors if dashboard + PDF are generated.  
-- News sentiment slows after ~100 calls; cached thereafter.
-
----
-
-## 🧠 Understanding Sentiment
-
-- **Sentiment** = raw VADER compound (−1 to +1)  
-- **SentimentZ** = z-score vs all tickers that day  
-
-Use `SentimentZ` when **ranking across many tickers**.
-
----
-
-## 📌 Example Workflow
-
-```bash
-# Morning scan with new snapshot
-python -m src.pipeline --tickers data/tickers_sp500.txt --outdir results --force_new_snapshot
-
-# Open interactive dashboard
-open results/top10_dashboard.html   # macOS
-start results\top10_dashboard.html # Windows
-
-# Optional backtest
-python -m src.backtest_one_month --tickers data/tickers_sp500.txt --outdir results
+```
+app.py              Flask server + JSON API
+config.yaml         data sources, horizons, news settings, backtest settings
+weights.yaml        feature weights per horizon (also edited from the UI)
+src/universe.py     S&P 500 list with GICS sectors
+src/prices.py       incremental daily OHLCV store (repairs dividend/split re-adjustments)
+src/macro.py        FRED yields / breakeven / Fed funds / CPI, VIX
+src/fundamentals.py P/E history + company info -> point-in-time earnings-yield panels
+src/news.py         Google News RSS, Yahoo, NewsAPI; VADER / FinBERT sentiment
+src/features.py     feature engine (wide date x ticker panels)
+src/scoring.py      z-scoring, weighting, tanh scaling
+src/engine.py       live scoring + refresh orchestration
+src/backtest.py     walk-forward evaluation
+web/                single-page UI (fonts and charts served locally, works offline)
+src/legacy/         the original v1 scanner, kept for reference
 ```
 
----
+## Roadmap
 
-## 📈 Roadmap (AI/ML Upgrade)
-
-- Add ML models (LightGBM, logistic regression) for 40/60/120-day forecasts  
-- Meta-labeling: filter rule-based entries  
-- Replace VADER with FinBERT sentiment  
-- Time-aware cross-validation (purged/embargoed CV)  
-- Portfolio risk-adjusted allocation
-
----
-
-## 📜 License
-
-MIT License — free to use and modify.
+- ML models (LightGBM / ridge per horizon) trained with purged walk-forward CV, compared against this baseline in the Backtest tab
+- Point-in-time S&P 500 membership to remove survivorship bias
+- Intraday / live data
