@@ -31,7 +31,7 @@ from urllib.parse import quote_plus
 import pandas as pd
 import requests
 
-from .config import Paths
+from .config import Paths, ns
 
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X) call-signal-scanner/2.0"}
 _CORP = re.compile(r"\b(inc|incorporated|corp|corporation|co|company|ltd|plc|holdings|group|"
@@ -333,7 +333,7 @@ def load_sentiment_panel(paths: Paths, index: pd.DatetimeIndex, columns) -> pd.D
     if not paths.news_sent.exists():
         return pd.DataFrame(index=index, columns=columns, dtype=float)
     s = pd.read_parquet(paths.news_sent)
-    s["date"] = pd.to_datetime(s["date"])
+    s["date"] = ns(s["date"])
     w = s.pivot_table(index="date", columns="ticker", values="sentiment", aggfunc="last")
     w = w.reindex(columns=columns)
     full = w.reindex(w.index.union(index)).sort_index().ffill(limit=3)

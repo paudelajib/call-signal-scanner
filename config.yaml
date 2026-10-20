@@ -61,3 +61,4 @@ backtest:
   start: "2016-01-01"      # first scoring date (needs ~1y of warm-up history before it)
   oos_years: 2             # last N years are held out to compare default vs IC-learned weights
   quantiles: 5
+  point_in_time_membership: true   # only score a stock after the date it joined the S&P 500

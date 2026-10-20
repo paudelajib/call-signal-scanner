@@ -121,7 +121,9 @@ def compute_features(panel: Dict[str, pd.DataFrame], bench: pd.Series, macro: pd
     macd = _ema(c, 12) - _ema(c, 26)
     f["macd_hist"] = (macd - macd.ewm(span=9, adjust=False).mean()) / c
     f["near_52w_high"] = c / c.rolling(252, min_periods=126).max() - 1
-    f["vol_surge"] = np.log(v.rolling(5).mean() / v.rolling(63, min_periods=40).mean())
+    with np.errstate(divide="ignore", invalid="ignore"):
+        f["vol_surge"] = np.log(v.rolling(5).mean() / v.rolling(63, min_periods=40).mean())
+    f["vol_surge"] = f["vol_surge"].replace([np.inf, -np.inf], np.nan)
     daily_ret = c.pct_change(fill_method=None)
     f["volatility_3m"] = daily_ret.rolling(63, min_periods=40).std() * np.sqrt(252)
     sec = sectors.reindex(c.columns)

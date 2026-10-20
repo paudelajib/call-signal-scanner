@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from .config import Paths
+from .config import Paths, ns
 
 FIELDS = ["open", "high", "low", "close", "volume"]
 NY = ZoneInfo("America/New_York")
@@ -29,7 +29,7 @@ CHUNK = 80
 def load_prices(paths: Paths) -> pd.DataFrame:
     if paths.prices.exists():
         df = pd.read_parquet(paths.prices)
-        df["date"] = pd.to_datetime(df["date"])
+        df["date"] = ns(df["date"])
         return df
     return pd.DataFrame(columns=["date", "ticker"] + FIELDS)
 
@@ -83,6 +83,7 @@ def _download(tickers: List[str], start: str, end: Optional[str] = None) -> pd.D
     if not frames:
         return pd.DataFrame(columns=["date", "ticker"] + FIELDS)
     out = pd.concat(frames, ignore_index=True)
+    out["date"] = ns(out["date"])
     for f in FIELDS:
         if f not in out.columns:
             out[f] = np.nan
@@ -155,6 +156,7 @@ def update_prices(tickers: Iterable[str], cfg: Dict, paths: Paths,
         recent = rr
     before = len(store)
     merged = pd.concat([x for x in [keep, recent, full] if not x.empty], ignore_index=True)
+    merged["date"] = ns(merged["date"])
     merged = merged[merged["date"] <= cutoff]
     merged = merged.drop_duplicates(["date", "ticker"], keep="last")
     merged = merged.sort_values(["ticker", "date"]).reset_index(drop=True)

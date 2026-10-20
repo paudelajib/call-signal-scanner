@@ -119,10 +119,22 @@ def run_backtest(progress: Optional[Callable[[str, int, int], None]] = None,
     scale = float(cfg["score"].get("tanh_scale", 0.9))
     q = int(bt.get("quantiles", 5))
 
+    # Point-in-time membership: a stock only enters the backtest from the date it joined the
+    # S&P 500. Without this, stocks that were added *because* they rallied are scored years
+    # before anyone knew they would be index members (a strong look-ahead bias).
+    member = pd.DataFrame(True, index=rdates, columns=close.columns)
+    if bt.get("point_in_time_membership", True) and "date_added" in inp["universe"]:
+        added = pd.to_datetime(inp["universe"].set_index("ticker")["date_added"], errors="coerce")
+        added = added.reindex(close.columns)
+        for t, d in added.items():
+            if pd.notna(d):
+                member.loc[member.index < d, t] = False
+    results_member = float(member.values.mean())
+
     z = {}
     for i, n in enumerate(SCORED):
         if n in feats:
-            z[n] = xs_z(feats[n].reindex(rdates).astype(float), winsor)
+            z[n] = xs_z(feats[n].reindex(rdates).astype(float).where(member), winsor)
         if progress:
             progress("backtest: z-scoring", i + 1, len(SCORED))
 
@@ -133,9 +145,11 @@ def run_backtest(progress: Optional[Callable[[str, int, int], None]] = None,
                "n_dates": int(len(rdates)), "n_tickers": int(close.shape[1]),
                "rebalance_every": step, "oos_start": str(oos_start.date()),
                "coverage": coverage, "horizons": {},
+               "point_in_time_membership": bool(bt.get("point_in_time_membership", True)),
+               "avg_members_frac": results_member,
                "caveats": [
-                   "Universe = today's S&P 500 members, so past losers that left the index are "
-                   "missing (survivorship bias flatters results).",
+                   "Stocks enter the test only from the date they joined the S&P 500, but companies "
+                   "that were later removed are still missing (some survivorship bias remains).",
                    "P/E history only reaches back as far as Yahoo's quarterly valuation data; "
                    "earlier dates treat valuation as neutral.",
                    "News sentiment has history only from the day this app started collecting it.",
@@ -145,7 +159,7 @@ def run_backtest(progress: Optional[Callable[[str, int, int], None]] = None,
     for hi, (h, spec) in enumerate(cfg["horizons"].items()):
         H = int(spec["days"])
         fwd_all = close.shift(-H) / open_.shift(-1) - 1
-        fwd = fwd_all.reindex(rdates)
+        fwd = fwd_all.reindex(rdates).where(member)
         valid_until = idx[max(0, len(idx) - 1 - H)]
         fwd = fwd[fwd.index <= valid_until]
         fwd_ex = fwd.sub(fwd.mean(axis=1), axis=0)

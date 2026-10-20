@@ -1,5 +1,9 @@
 """Macro data: Treasury yields, breakeven inflation, Fed funds, CPI (FRED) and VIX (Yahoo).
 
+Source order per series: FRED CSV  ->  US Treasury daily yield-curve CSVs (nominal + real
+yields; 10Y breakeven = nominal 10Y - real 10Y)  ->  Yahoo (^TNX for 10Y, ^IRX 13-week bill as a
+stand-in for Fed funds). Every fallback is real published data; the source used is recorded.
+
 Stored as one wide daily parquet. Monthly CPI is kept for display only (it is published with a
 lag, so using it in scores would leak future information); the scoring uses the daily
 10-year breakeven inflation rate (T10YIE) as the market's real-time inflation expectation.
@@ -7,28 +11,83 @@ lag, so using it in scores would leak future information); the scoring uses the 
 from __future__ import annotations
 
 import io
+import time
 from typing import Dict
 
 import pandas as pd
 import requests
 import yfinance as yf
 
-from .config import Paths
+from .config import Paths, ns
 
-FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
-# Yahoo fallbacks if FRED is unreachable (yields in percent)
-YAHOO_FALLBACK = {"DGS10": "^TNX"}
+FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+TREASURY_URL = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+                "daily-treasury-rates.csv/{year}/all")
+BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# Yahoo fallbacks if FRED and Treasury are unreachable (yields in percent)
+YAHOO_FALLBACK = {"DGS10": "^TNX", "DFF": "^IRX"}
+
+
+def _get(url: str, params: dict, tries: int = 3, timeout: int = 60) -> requests.Response:
+    last = None
+    for k in range(tries):
+        try:
+            r = requests.get(url, params=params, timeout=timeout,
+                             headers={"User-Agent": BROWSER_UA, "Accept": "text/csv,*/*"})
+            if r.status_code == 200 and r.text.strip():
+                return r
+            last = RuntimeError(f"HTTP {r.status_code}")
+        except requests.RequestException as e:
+            last = e
+        time.sleep(2 * (k + 1))
+    raise last or RuntimeError("no response")
 
 
 def _fred(series_id: str, start: str) -> pd.Series:
-    r = requests.get(FRED_URL.format(sid=series_id), timeout=30,
-                     headers={"User-Agent": "call-signal-scanner/2.0"})
-    r.raise_for_status()
+    r = _get(FRED_URL, {"id": series_id, "cosd": start})
     df = pd.read_csv(io.StringIO(r.text))
     date_col = df.columns[0]
-    s = pd.to_numeric(df[series_id], errors="coerce")
-    s.index = pd.to_datetime(df[date_col])
+    val_col = series_id if series_id in df.columns else df.columns[-1]
+    s = pd.to_numeric(df[val_col], errors="coerce")
+    s.index = ns(pd.DatetimeIndex(df[date_col]))
     return s[s.index >= pd.Timestamp(start)].dropna().rename(series_id)
+
+
+def _treasury_curve(kind: str, start: str) -> pd.DataFrame:
+    """kind: 'daily_treasury_yield_curve' (nominal) or 'daily_treasury_real_yield_curve'."""
+    frames = []
+    for year in range(pd.Timestamp(start).year, pd.Timestamp.now().year + 1):
+        try:
+            r = _get(TREASURY_URL.format(year=year),
+                     {"type": kind, "field_tdr_date_value": year, "page": "", "_format": "csv"},
+                     tries=2)
+            df = pd.read_csv(io.StringIO(r.text))
+            df.columns = [c.strip().lower() for c in df.columns]
+            df.index = ns(pd.DatetimeIndex(pd.to_datetime(df["date"], format="mixed")))
+            frames.append(df.drop(columns=["date"]).apply(pd.to_numeric, errors="coerce"))
+        except Exception:
+            continue
+    if not frames:
+        raise RuntimeError("treasury.gov unreachable")
+    return pd.concat(frames).sort_index()
+
+
+def _treasury_series(start: str) -> Dict[str, pd.Series]:
+    out: Dict[str, pd.Series] = {}
+    nom = _treasury_curve("daily_treasury_yield_curve", start)
+    if "10 yr" in nom:
+        out["DGS10"] = nom["10 yr"].dropna().rename("DGS10")
+    if "2 yr" in nom:
+        out["DGS2"] = nom["2 yr"].dropna().rename("DGS2")
+    try:
+        real = _treasury_curve("daily_treasury_real_yield_curve", start)
+        if "10 yr" in real and "DGS10" in out:
+            be = (out["DGS10"] - real["10 yr"]).dropna()
+            out["T10YIE"] = be.rename("T10YIE")
+    except Exception:
+        pass
+    return out
 
 
 def _yahoo_close(symbol: str, start: str) -> pd.Series:
@@ -36,29 +95,47 @@ def _yahoo_close(symbol: str, start: str) -> pd.Series:
                       multi_level_index=False, timeout=30)
     if raw is None or raw.empty:
         return pd.Series(dtype=float)
-    s = raw["Close"].astype(float)
+    s = raw["Close"]
+    if isinstance(s, pd.DataFrame):
+        s = s.iloc[:, 0]
+    s = s.astype(float)
     idx = pd.DatetimeIndex(s.index)
-    s.index = (idx.tz_localize(None) if idx.tz is not None else idx).normalize()
+    s.index = ns((idx.tz_localize(None) if idx.tz is not None else idx).normalize())
     return s
 
 
 def update_macro(cfg: Dict, paths: Paths) -> Dict[str, str]:
     start = cfg["history"]["start"]
     cols, status = {}, {}
+    treasury: Dict[str, pd.Series] | None = None
     for sid in cfg["macro"]["fred_series"]:
         try:
             cols[sid] = _fred(sid, start)
             status[sid] = "fred"
+            continue
         except Exception as e:
-            fb = YAHOO_FALLBACK.get(sid)
-            if fb:
+            err = e
+        if sid in ("DGS10", "DGS2", "T10YIE"):
+            if treasury is None:
                 try:
-                    cols[sid] = _yahoo_close(fb, start).rename(sid)
+                    treasury = _treasury_series(start)
+                except Exception:
+                    treasury = {}
+            if sid in treasury and len(treasury[sid]):
+                cols[sid] = treasury[sid]
+                status[sid] = "treasury.gov"
+                continue
+        fb = YAHOO_FALLBACK.get(sid)
+        if fb:
+            try:
+                ys = _yahoo_close(fb, start)
+                if len(ys):
+                    cols[sid] = ys.rename(sid)
                     status[sid] = f"yahoo {fb}"
                     continue
-                except Exception:
-                    pass
-            status[sid] = f"failed: {e}"
+            except Exception:
+                pass
+        status[sid] = f"failed: {err}"
     for sym, name in cfg["macro"].get("yahoo_series", {}).items():
         try:
             cols[name] = _yahoo_close(sym, start).rename(name)
@@ -68,6 +145,8 @@ def update_macro(cfg: Dict, paths: Paths) -> Dict[str, str]:
 
     if not cols:
         return status
+    for k in list(cols):
+        cols[k] = cols[k][~cols[k].index.duplicated(keep="last")]
     new = pd.concat(cols.values(), axis=1).sort_index()
     if paths.macro.exists():  # keep any history we had if a source failed today
         old = pd.read_parquet(paths.macro)
@@ -81,7 +160,7 @@ def load_macro(paths: Paths) -> pd.DataFrame:
     if not paths.macro.exists():
         return pd.DataFrame()
     df = pd.read_parquet(paths.macro)
-    df.index = pd.to_datetime(df.index)
+    df.index = ns(df.index)
     return df.sort_index()
 
 

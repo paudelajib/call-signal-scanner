@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from . import fundamentals, macro, news, prices, universe
-from .config import Paths, load_config
+from .config import Paths, load_config, ns
 from .features import FEATURE_INFO, compute_features
 from .scoring import load_weights, score_horizon, zscore_features
 
@@ -22,6 +22,7 @@ def build_inputs(cfg: Dict, paths: Paths, with_news: bool = True) -> Dict:
     if long.empty:
         raise RuntimeError("No price data yet - run a refresh first.")
     panel = prices.to_panel(long)
+    panel = {k: v.set_axis(ns(v.index), axis=0) for k, v in panel.items()}
     bench_t = cfg["universe"].get("benchmark", "SPY")
     if bench_t not in panel["close"].columns:
         raise RuntimeError(f"Benchmark {bench_t} missing from price store.")
@@ -81,7 +82,7 @@ def _has_future_stack() -> bool:
 
 def load_recent_z(paths: Paths) -> Dict[str, pd.DataFrame]:
     zl = pd.read_parquet(paths.features_recent)
-    zl["date"] = pd.to_datetime(zl["date"])
+    zl["date"] = ns(zl["date"])
     zl = zl.set_index(["date", "ticker"])
     return {c: zl[c].unstack("ticker") for c in zl.columns}
 
@@ -164,6 +165,7 @@ def run_refresh(progress: Optional[Callable[[str, int, int], None]] = None,
     if progress:
         progress("macro", 0, 1)
     log["macro"] = macro.update_macro(cfg, paths)
+    print("\n[macro] " + ", ".join(f"{k}: {v}" for k, v in log["macro"].items()), flush=True)
     log["fundamentals"] = fundamentals.update_fundamentals(uni["ticker"], cfg, paths, progress,
                                                            force=fundamentals_force)
     if progress:

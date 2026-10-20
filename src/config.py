@@ -27,6 +27,20 @@ def load_config(path: Path = CONFIG_PATH) -> Dict[str, Any]:
     return cfg
 
 
+def ns(x):
+    """Coerce dates to naive datetime64[ns].
+
+    pandas 3 keeps whatever resolution a source used (ms from parquet, us from Yahoo, ...), and
+    joins refuse to match mixed resolutions, so every date column/index goes through this."""
+    import pandas as pd
+    if isinstance(x, pd.DataFrame):
+        raise TypeError("pass a Series or Index")
+    out = pd.to_datetime(x)
+    if getattr(out, "tz", None) is not None or getattr(getattr(out, "dt", None), "tz", None) is not None:
+        out = out.tz_localize(None) if isinstance(out, pd.DatetimeIndex) else out.dt.tz_localize(None)
+    return out.astype("datetime64[ns]")
+
+
 class Paths:
     """All on-disk locations, derived from config['data_dir']."""
 

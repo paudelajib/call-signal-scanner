@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from .config import Paths
+from .config import Paths, ns
 
 INFO_FIELDS = [
     "shortName", "longName", "sector", "industry", "marketCap", "currentPrice",
@@ -90,7 +90,7 @@ def update_fundamentals(tickers: Iterable[str], cfg: Dict, paths: Paths,
     max_age = pd.Timedelta(days=int(cfg["fundamentals"].get("refresh_days", 7)))
     today = pd.Timestamp(datetime.now().date())
     if not force and not info_latest.empty:
-        age = today - pd.to_datetime(info_latest.set_index("ticker")["fetched_at"])
+        age = today - ns(info_latest.set_index("ticker")["fetched_at"])
         fresh = set(age[age < max_age].index)
         todo = [t for t in tickers if t not in fresh]
     else:
@@ -155,11 +155,13 @@ def earnings_yield_panels(close: pd.DataFrame, paths: Paths, lag_days: int) -> D
     pts: List[pd.DataFrame] = []
     if paths.valuation.exists():
         v = pd.read_parquet(paths.valuation)
-        v["period_end"] = pd.to_datetime(v["period_end"])
+        v["period_end"] = ns(v["period_end"])
         v = v[v["ticker"].isin(close.columns)]
         # price at (or just before) each quarter end
         px_long = close.stack().rename("px").reset_index()
         px_long.columns = ["date", "ticker", "px"]
+        px_long["date"] = ns(px_long["date"])
+        px_long = px_long.dropna(subset=["px"])
         px_long = px_long.sort_values("date")
         v = v.sort_values("period_end")
         v = pd.merge_asof(v, px_long, left_on="period_end", right_on="date", by="ticker",
@@ -172,7 +174,7 @@ def earnings_yield_panels(close: pd.DataFrame, paths: Paths, lag_days: int) -> D
     if not info.empty and "fetched_at" in info.columns:
         i2 = pd.DataFrame({
             "ticker": info["ticker"],
-            "avail": pd.to_datetime(info["fetched_at"]),
+            "avail": ns(info["fetched_at"]),
             "eps_t": pd.to_numeric(info.get("trailingEps"), errors="coerce"),
             "eps_f": pd.to_numeric(info.get("forwardEps"), errors="coerce"),
         })
@@ -181,6 +183,7 @@ def earnings_yield_panels(close: pd.DataFrame, paths: Paths, lag_days: int) -> D
         nan = pd.DataFrame(np.nan, index=close.index, columns=close.columns)
         return {"ey_trailing": nan, "ey_forward": nan.copy()}
     allp = pd.concat(pts, ignore_index=True).dropna(subset=["avail"])
+    allp["avail"] = ns(allp["avail"])
     for col, name in [("eps_t", "ey_trailing"), ("eps_f", "ey_forward")]:
         w = allp.dropna(subset=[col]).pivot_table(index="avail", columns="ticker", values=col,
                                                   aggfunc="last")
